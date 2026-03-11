@@ -39,14 +39,4 @@ def recommandations():
         "recommandations": liste,
         "priorite": "haute" if alertes > 5 else "normale"
     })
-```
 
-Clique **"Commit new file"**
-
----
-
-**Fichier 2 — "Add file" → "Create new file"**
-Nom : `requirements.txt`
-```
-flask
-gunicorn

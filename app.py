@@ -1,5 +1,12 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from datetime import datetime
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.units import cm
+import io
+import base64
 
 app = Flask(__name__)
 
@@ -19,6 +26,151 @@ def analyse():
         "maximum": max(valeurs),
         "minimum": min(valeurs),
         "count": len(valeurs)
+    })
+
+@app.route('/generer_pdf', methods=['POST'])
+def generer_pdf():
+    data = request.get_json()
+    
+    departement = data.get('departement', 'N/A')
+    total_rapports = data.get('total_rapports', 0)
+    favoris = data.get('favoris', 0)
+    conformite = data.get('conformite', 0)
+    utilisateur = data.get('utilisateur', 'N/A')
+    rapports = data.get('rapports', [])
+    
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer;
+        pagesize=A4,
+        rightMargin=2*cm,
+        leftMargin=2*cm,
+        topMargin=2*cm,
+        bottomMargin=2*cm
+    )
+    
+    styles = getSampleStyleSheet()
+    elements = []
+    
+    # ── Titre principal
+    titre_style = ParagraphStyle(
+        'Titre',
+        parent=styles['Title'],
+        fontSize=22,
+        textColor=colors.HexColor('#0b1d3a'),
+        spaceAfter=10
+    )
+    elements.append(Paragraph("S.T.P.A — Rapport " + departement, titre_style))
+    
+    # ── Sous-titre date
+    sous_titre_style = ParagraphStyle(
+        'SousTitre',
+        parent=styles['Normal'],
+        fontSize=11,
+        textColor=colors.HexColor('#64748b'),
+        spaceAfter=20
+    )
+    elements.append(Paragraph(
+        "Généré le " + datetime.now().strftime('%d/%m/%Y à %H:%M') +
+        " par " + utilisateur,
+        sous_titre_style
+    ))
+    elements.append(Spacer(1, 0.5*cm))
+    
+    # ── KPI Cards
+    kpi_style = ParagraphStyle(
+        'KPI',
+        parent=styles['Normal'],
+        fontSize=13,
+        textColor=colors.HexColor('#0b1d3a'),
+        fontName='Helvetica-Bold',
+        spaceAfter=6
+    )
+    elements.append(Paragraph("📊 Indicateurs clés", kpi_style))
+    elements.append(Spacer(1, 0.3*cm))
+    
+    kpi_data = [
+        ['Indicateur', 'Valeur'],
+        ['Total Rapports', str(total_rapports)],
+        ['Favoris', str(favoris)],
+        ['Conformité CQ', str(conformite) + '%'],
+        ['Département', departement],
+        ['Date rapport', datetime.now().strftime('%d/%m/%Y')]
+    ]
+    
+    kpi_table = Table(kpi_data, colWidths=[8*cm, 8*cm])
+    kpi_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0b1d3a')),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,0), 12),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.HexColor('#f8fafc'), colors.white]),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#dde4f0')),
+        ('ROWHEIGHT', (0,0), (-1,-1), 0.8*cm),
+        ('TOPPADDING', (0,0), (-1,-1), 8),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+    ]))
+    elements.append(kpi_table)
+    elements.append(Spacer(1, 0.8*cm))
+    
+    # ── Liste rapports
+    if rapports:
+        elements.append(Paragraph("📋 Liste des rapports", kpi_style))
+        elements.append(Spacer(1, 0.3*cm))
+        
+        rapport_data = [['#', 'Titre', 'Type', 'Favori']]
+        for i, r in enumerate(rapports, 1):
+            rapport_data.append([
+                str(i),
+                r.get('titre', 'N/A'),
+                r.get('type', 'N/A'),
+                '⭐' if r.get('favori') else ''
+            ])
+        
+        rapport_table = Table(
+            rapport_data,
+            colWidths=[1*cm, 10*cm, 4*cm, 2*cm]
+        )
+        rapport_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2563eb')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,-1), 10),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.HexColor('#f0f9ff'), colors.white]),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#dde4f0')),
+            ('ROWHEIGHT', (0,0), (-1,-1), 0.7*cm),
+        ]))
+        elements.append(rapport_table)
+        elements.append(Spacer(1, 0.8*cm))
+    
+    # ── Pied de page
+    footer_style = ParagraphStyle(
+        'Footer',
+        parent=styles['Normal'],
+        fontSize=9,
+        textColor=colors.HexColor('#94a3b8'),
+        alignment=1
+    )
+    elements.append(Spacer(1, 1*cm))
+    elements.append(Paragraph(
+        "S.T.P.A — Société Tunisienne de Production Alimentaire | STPA Connect",
+        footer_style
+    ))
+    
+    doc.build(elements)
+    
+    pdf_bytes = buffer.getvalue()
+    pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+    
+    return jsonify({
+        "pdf_base64": pdf_base64,
+        "nom_fichier": "rapport_" + departement + "_" + datetime.now().strftime('%Y%m%d') + ".pdf",
+        "taille": len(pdf_bytes),
+        "date": datetime.now().strftime('%d/%m/%Y %H:%M')
     })
 
 @app.route('/recommandations', methods=['POST'])

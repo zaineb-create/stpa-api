@@ -1,17 +1,24 @@
-@app.route('/afficher_pdf', methods=['POST'])
+@app.route('/afficher_pdf', methods=['GET', 'POST'])
 def afficher_pdf():
     from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.units import cm
+    from flask import Response, request
 
-    data = request.get_json()
+    # ── Accepte GET et POST
+    if request.method == 'POST':
+        data = request.get_json() or {}
+    else:
+        data = request.args
+
     departement = data.get('departement', 'N/A')
-    total_rapports = data.get('total_rapports', 0)
-    favoris = data.get('favoris', 0)
-    conformite = data.get('conformite', 0)
+    total_rapports = int(data.get('total_rapports', 0))
+    favoris = int(data.get('favoris', 0))
+    conformite = float(data.get('conformite', 0))
     utilisateur = data.get('utilisateur', 'N/A')
+    titre = data.get('titre', 'Rapport')
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4,
@@ -23,7 +30,7 @@ def afficher_pdf():
 
     titre_style = ParagraphStyle('Titre', parent=styles['Title'],
         fontSize=22, textColor=colors.HexColor('#0b1d3a'), spaceAfter=10)
-    elements.append(Paragraph("S.T.P.A - Rapport " + departement, titre_style))
+    elements.append(Paragraph("S.T.P.A - " + titre, titre_style))
 
     sous_titre_style = ParagraphStyle('SousTitre', parent=styles['Normal'],
         fontSize=11, textColor=colors.HexColor('#64748b'), spaceAfter=20)
@@ -40,10 +47,11 @@ def afficher_pdf():
 
     kpi_data = [
         ['Indicateur', 'Valeur'],
+        ['Titre', titre],
+        ['Departement', departement],
         ['Total Rapports', str(total_rapports)],
         ['Favoris', str(favoris)],
         ['Conformite CQ', str(conformite) + '%'],
-        ['Departement', departement],
         ['Date rapport', datetime.now().strftime('%d/%m/%Y')]
     ]
     kpi_table = Table(kpi_data, colWidths=[8*cm, 8*cm])
@@ -72,23 +80,26 @@ def afficher_pdf():
     pdf_bytes = buffer.getvalue()
     pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
 
-    # ── Retourne une page HTML avec le PDF intégré
     html = """<!DOCTYPE html>
 <html>
 <head>
-    <title>Rapport """ + departement + """</title>
+    <meta charset="UTF-8">
+    <title>""" + titre + """</title>
     <style>
-        body {{ margin: 0; padding: 0; background: #1e2035; }}
-        .header {{
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0f172a; font-family: Arial, sans-serif; }
+        .header {
             background: #0b1d3a;
             color: white;
-            padding: 15px 30px;
+            padding: 12px 24px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-        }}
-        .header h1 {{ margin: 0; font-size: 20px; font-family: Arial; }}
-        .btn {{
+            border-bottom: 2px solid #2563eb;
+        }
+        .header h1 { font-size: 18px; }
+        .header span { font-size: 13px; color: #94a3b8; margin-left: 12px; }
+        .btn-download {
             background: #2563eb;
             color: white;
             border: none;
@@ -97,18 +108,25 @@ def afficher_pdf():
             cursor: pointer;
             font-size: 14px;
             text-decoration: none;
-        }}
-        iframe {{
+            display: inline-block;
+        }
+        .btn-download:hover { background: #1d4ed8; }
+        iframe {
             width: 100%;
-            height: calc(100vh - 60px);
+            height: calc(100vh - 56px);
             border: none;
-        }}
+            display: block;
+        }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>📄 Rapport """ + departement + """ — """ + datetime.now().strftime('%d/%m/%Y') + """</h1>
-        <a class="btn" href="data:application/pdf;base64,""" + pdf_base64 + """" 
+        <div>
+            <h1>📄 """ + titre + """</h1>
+            <span>Departement : """ + departement + """ | """ + datetime.now().strftime('%d/%m/%Y %H:%M') + """</span>
+        </div>
+        <a class="btn-download"
+           href="data:application/pdf;base64,""" + pdf_base64 + """"
            download="rapport_""" + departement + """_""" + datetime.now().strftime('%Y%m%d') + """.pdf">
            ⬇️ Telecharger PDF
         </a>
@@ -117,5 +135,4 @@ def afficher_pdf():
 </body>
 </html>"""
 
-    from flask import Response
     return Response(html, mimetype='text/html')

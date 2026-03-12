@@ -246,3 +246,133 @@ def afficher_pdf():
     )
 
     return Response(html, mimetype='text/html')
+
+@app.route('/excel_en_pdf', methods=['POST'])
+def excel_en_pdf():
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.units import cm
+
+    data = request.get_json()
+    titre = data.get('titre', 'Rapport Excel')
+    departement = data.get('departement', 'N/A')
+    utilisateur = data.get('utilisateur', 'N/A')
+    colonnes = data.get('colonnes', [])
+    lignes = data.get('lignes', [])
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4),
+        rightMargin=1.5*cm, leftMargin=1.5*cm,
+        topMargin=2*cm, bottomMargin=2*cm)
+
+    styles = getSampleStyleSheet()
+    elements = []
+
+    # Titre
+    titre_style = ParagraphStyle('Titre', parent=styles['Title'],
+        fontSize=20, textColor=colors.HexColor('#0b1d3a'), spaceAfter=6)
+    elements.append(Paragraph("S.T.P.A - " + titre, titre_style))
+
+    # Sous-titre
+    sous_style = ParagraphStyle('Sous', parent=styles['Normal'],
+        fontSize=10, textColor=colors.HexColor('#64748b'), spaceAfter=16)
+    elements.append(Paragraph(
+        "Departement : " + departement + " | Genere le " +
+        datetime.now().strftime('%d/%m/%Y a %H:%M') + " par " + utilisateur,
+        sous_style))
+    elements.append(Spacer(1, 0.3*cm))
+
+    # Tableau des données Excel
+    if colonnes and lignes:
+        kpi_style = ParagraphStyle('KPI', parent=styles['Normal'],
+            fontSize=12, textColor=colors.HexColor('#0b1d3a'),
+            fontName='Helvetica-Bold', spaceAfter=6)
+        elements.append(Paragraph("Donnees du fichier Excel", kpi_style))
+        elements.append(Spacer(1, 0.3*cm))
+
+        # Calcul largeur colonnes
+        nb_col = len(colonnes)
+        page_width = 25*cm
+        col_width = page_width / nb_col
+
+        table_data = [colonnes]
+        for ligne in lignes:
+            table_data.append([str(v) for v in ligne])
+
+        table = Table(table_data, colWidths=[col_width] * nb_col)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0b1d3a')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 10),
+            ('FONTSIZE', (0,1), (-1,-1), 9),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#dde4f0')),
+            ('ROWHEIGHT', (0,0), (-1,-1), 0.7*cm),
+            ('TOPPADDING', (0,0), (-1,-1), 6),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1),
+             [colors.HexColor('#f8fafc'), colors.white]),
+        ]))
+        elements.append(table)
+        elements.append(Spacer(1, 0.5*cm))
+
+        # Résumé statistiques
+        stats_style = ParagraphStyle('Stats', parent=styles['Normal'],
+            fontSize=12, textColor=colors.HexColor('#0b1d3a'),
+            fontName='Helvetica-Bold', spaceAfter=6)
+        elements.append(Paragraph("Resume", stats_style))
+        elements.append(Spacer(1, 0.2*cm))
+
+        stats_data = [
+            ['Total lignes', str(len(lignes))],
+            ['Total colonnes', str(len(colonnes))],
+            ['Date export', datetime.now().strftime('%d/%m/%Y %H:%M')]
+        ]
+        stats_table = Table(stats_data, colWidths=[8*cm, 8*cm])
+        stats_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f0f9ff')),
+            ('FONTSIZE', (0,0), (-1,-1), 10),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#dde4f0')),
+            ('ROWHEIGHT', (0,0), (-1,-1), 0.7*cm),
+        ]))
+        elements.append(stats_table)
+    else:
+        elements.append(Paragraph("Aucune donnee disponible", styles['Normal']))
+
+    # Pied de page
+    footer_style = ParagraphStyle('Footer', parent=styles['Normal'],
+        fontSize=8, textColor=colors.HexColor('#94a3b8'), alignment=1)
+    elements.append(Spacer(1, 0.8*cm))
+    elements.append(Paragraph(
+        "S.T.P.A - Societe Tunisienne de Production Alimentaire | STPA Connect",
+        footer_style))
+
+    doc.build(elements)
+    pdf_bytes = buffer.getvalue()
+    pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+    nom_fichier = "excel_" + departement + "_" + datetime.now().strftime('%Y%m%d') + ".pdf"
+
+    html = (
+        "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>" + titre + "</title>"
+        "<style>"
+        "* { margin:0; padding:0; box-sizing:border-box; }"
+        "body { background:#0f172a; font-family:Arial,sans-serif; }"
+        ".header { background:#0b1d3a; color:white; padding:12px 24px; display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #2563eb; }"
+        ".header h1 { font-size:18px; }"
+        ".header span { font-size:12px; color:#94a3b8; }"
+        ".btn { background:#2563eb; color:white; padding:10px 20px; border-radius:8px; font-size:14px; text-decoration:none; }"
+        "iframe { width:100%; height:calc(100vh - 56px); border:none; display:block; }"
+        "</style></head><body>"
+        "<div class='header'>"
+        "<div><h1>" + titre + "</h1><span>" + departement + " | " + datetime.now().strftime('%d/%m/%Y %H:%M') + "</span></div>"
+        "<a class='btn' href='data:application/pdf;base64," + pdf_base64 + "' download='" + nom_fichier + "'>Telecharger PDF</a>"
+        "</div>"
+        "<iframe src='data:application/pdf;base64," + pdf_base64 + "'></iframe>"
+        "</body></html>"
+    )
+    return Response(html, mimetype='text/html')

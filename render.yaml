@@ -2,7 +2,7 @@ services:
   - type: web
     name: stpa-api
     env: python
+    runtime: python
+    pythonVersion: "3.11.0"
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
-
-

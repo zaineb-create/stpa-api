@@ -1,8 +1,8 @@
-import schedule
-import threading
-import time
-import json
-from datetime import datetime
+from flask import Flask, request, jsonify, Response
+import io
+import base64
+
+app = Flask(__name__)
 
 # ── Mémoire interne de l'agent
 agent_etat = {

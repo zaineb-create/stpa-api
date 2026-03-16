@@ -1,7 +1,5 @@
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify
 from datetime import datetime
-import io
-import base64
 
 app = Flask(__name__)
 
@@ -20,526 +18,266 @@ agent_etat = {
 # ══════════════════════════════════════════
 @app.route('/test', methods=['GET'])
 def test():
-    return jsonify({"status": "OK", "message": "API STPA fonctionne"})
+    return jsonify({"status": "OK", "message": "API STPA — analyse_kpi active"})
 
 # ══════════════════════════════════════════
-# /analyse
+# /analyse_kpi — Analyse complète SSSE
 # ══════════════════════════════════════════
-@app.route('/analyse', methods=['POST'])
-def analyse():
-    data = request.get_json()
-    valeurs = data.get('valeurs', [])
-    if not valeurs:
-        return jsonify({"erreur": "Aucune donnee"}), 400
-    return jsonify({
-        "total": round(sum(valeurs), 2),
-        "moyenne": round(sum(valeurs) / len(valeurs), 2),
-        "maximum": max(valeurs),
-        "minimum": min(valeurs),
-        "count": len(valeurs)
-    })
+@app.route('/analyse_kpi', methods=['POST'])
+def analyse_kpi():
 
-# ══════════════════════════════════════════
-# /recommandations
-# ══════════════════════════════════════════
-@app.route('/recommandations', methods=['POST'])
-def recommandations():
-    data = request.get_json()
-    conformite = data.get('conformite', 0)
-    alertes = data.get('alertes', 0)
-    liste = []
-    if conformite < 90:
-        liste.append("Conformite CQ en dessous de 90%")
-    if alertes > 5:
-        liste.append("Nombre d alertes eleve")
-    if conformite >= 95:
-        liste.append("Excellente conformite")
-    if not liste:
-        liste.append("Tous les indicateurs sont dans les normes")
-    return jsonify({
-        "recommandations": liste,
-        "priorite": "haute" if alertes > 5 else "normale"
-    })
+    data   = request.get_json() or {}
+    lignes = data.get('lignes', [])
+    source = data.get('source', 'SSSE')
 
-# ══════════════════════════════════════════
-# /generer_pdf
-# ══════════════════════════════════════════
-@app.route('/generer_pdf', methods=['POST'])
-def generer_pdf():
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib import colors
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-    from reportlab.lib.units import cm
+    if not lignes:
+        return jsonify({"erreur": "Aucune donnee recue"}), 400
 
-    data = request.get_json()
-    departement = data.get('departement', 'N/A')
-    total_rapports = data.get('total_rapports', 0)
-    favoris = data.get('favoris', 0)
-    conformite = data.get('conformite', 0)
-    utilisateur = data.get('utilisateur', 'N/A')
-    rapports = data.get('rapports', [])
-
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4,
-        rightMargin=2*cm, leftMargin=2*cm,
-        topMargin=2*cm, bottomMargin=2*cm)
-    styles = getSampleStyleSheet()
-    elements = []
-
-    titre_style = ParagraphStyle('Titre', parent=styles['Title'],
-        fontSize=22, textColor=colors.HexColor('#0b1d3a'), spaceAfter=10)
-    elements.append(Paragraph("S.T.P.A - Rapport " + departement, titre_style))
-
-    sous_style = ParagraphStyle('Sous', parent=styles['Normal'],
-        fontSize=11, textColor=colors.HexColor('#64748b'), spaceAfter=20)
-    elements.append(Paragraph(
-        "Genere le " + datetime.now().strftime('%d/%m/%Y a %H:%M') + " par " + utilisateur,
-        sous_style))
-    elements.append(Spacer(1, 0.5*cm))
-
-    kpi_style = ParagraphStyle('KPI', parent=styles['Normal'],
-        fontSize=13, textColor=colors.HexColor('#0b1d3a'),
-        fontName='Helvetica-Bold', spaceAfter=6)
-    elements.append(Paragraph("Indicateurs cles", kpi_style))
-    elements.append(Spacer(1, 0.3*cm))
-
-    kpi_data = [
-        ['Indicateur', 'Valeur'],
-        ['Total Rapports', str(total_rapports)],
-        ['Favoris', str(favoris)],
-        ['Conformite CQ', str(conformite) + '%'],
-        ['Departement', departement],
-        ['Date rapport', datetime.now().strftime('%d/%m/%Y')]
-    ]
-    kpi_table = Table(kpi_data, colWidths=[8*cm, 8*cm])
-    kpi_table.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0b1d3a')),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,0), 12),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#dde4f0')),
-        ('ROWHEIGHT', (0,0), (-1,-1), 0.8*cm),
-        ('TOPPADDING', (0,0), (-1,-1), 8),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
-    ]))
-    elements.append(kpi_table)
-    elements.append(Spacer(1, 0.8*cm))
-
-    if rapports:
-        elements.append(Paragraph("Liste des rapports", kpi_style))
-        elements.append(Spacer(1, 0.3*cm))
-        rapport_data = [['#', 'Titre', 'Type', 'Favori']]
-        for i, r in enumerate(rapports, 1):
-            rapport_data.append([
-                str(i), r.get('titre', 'N/A'),
-                r.get('type', 'N/A'),
-                'Oui' if r.get('favori') else 'Non'
-            ])
-        rapport_table = Table(rapport_data, colWidths=[1*cm, 10*cm, 4*cm, 2*cm])
-        rapport_table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2563eb')),
-            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,0), (-1,-1), 10),
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#dde4f0')),
-            ('ROWHEIGHT', (0,0), (-1,-1), 0.7*cm),
-        ]))
-        elements.append(rapport_table)
-
-    footer_style = ParagraphStyle('Footer', parent=styles['Normal'],
-        fontSize=9, textColor=colors.HexColor('#94a3b8'), alignment=1)
-    elements.append(Spacer(1, 1*cm))
-    elements.append(Paragraph(
-        "S.T.P.A - Societe Tunisienne de Production Alimentaire | STPA Connect",
-        footer_style))
-
-    doc.build(elements)
-    pdf_bytes = buffer.getvalue()
-    pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
-    return jsonify({
-        "pdf_base64": pdf_base64,
-        "nom_fichier": "rapport_" + departement + "_" + datetime.now().strftime('%Y%m%d') + ".pdf",
-        "taille": len(pdf_bytes),
-        "date": datetime.now().strftime('%d/%m/%Y %H:%M')
-    })
-
-# ══════════════════════════════════════════
-# /afficher_pdf
-# ══════════════════════════════════════════
-@app.route('/afficher_pdf', methods=['GET', 'POST'])
-def afficher_pdf():
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib import colors
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-    from reportlab.lib.units import cm
-
-    data = request.get_json() or {} if request.method == 'POST' else request.args
-
-    departement    = data.get('departement', 'N/A')
-    total_rapports = int(data.get('total_rapports', 0))
-    favoris        = int(data.get('favoris', 0))
-    conformite     = float(data.get('conformite', 0))
-    utilisateur    = data.get('utilisateur', 'N/A')
-    titre          = data.get('titre', 'Rapport')
-
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4,
-        rightMargin=2*cm, leftMargin=2*cm,
-        topMargin=2*cm, bottomMargin=2*cm)
-    styles = getSampleStyleSheet()
-    elements = []
-
-    titre_style = ParagraphStyle('Titre', parent=styles['Title'],
-        fontSize=22, textColor=colors.HexColor('#0b1d3a'), spaceAfter=10)
-    elements.append(Paragraph("S.T.P.A - " + titre, titre_style))
-
-    sous_style = ParagraphStyle('Sous', parent=styles['Normal'],
-        fontSize=11, textColor=colors.HexColor('#64748b'), spaceAfter=20)
-    elements.append(Paragraph(
-        "Genere le " + datetime.now().strftime('%d/%m/%Y a %H:%M') + " par " + utilisateur,
-        sous_style))
-    elements.append(Spacer(1, 0.5*cm))
-
-    kpi_style = ParagraphStyle('KPI', parent=styles['Normal'],
-        fontSize=13, textColor=colors.HexColor('#0b1d3a'),
-        fontName='Helvetica-Bold', spaceAfter=6)
-    elements.append(Paragraph("Indicateurs cles", kpi_style))
-    elements.append(Spacer(1, 0.3*cm))
-
-    kpi_data = [
-        ['Indicateur', 'Valeur'],
-        ['Titre', titre],
-        ['Departement', departement],
-        ['Total Rapports', str(total_rapports)],
-        ['Favoris', str(favoris)],
-        ['Conformite CQ', str(conformite) + '%'],
-        ['Date rapport', datetime.now().strftime('%d/%m/%Y')]
-    ]
-    kpi_table = Table(kpi_data, colWidths=[8*cm, 8*cm])
-    kpi_table.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0b1d3a')),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,0), 12),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#dde4f0')),
-        ('ROWHEIGHT', (0,0), (-1,-1), 0.8*cm),
-        ('TOPPADDING', (0,0), (-1,-1), 8),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
-    ]))
-    elements.append(kpi_table)
-    elements.append(Spacer(1, 1*cm))
-
-    footer_style = ParagraphStyle('Footer', parent=styles['Normal'],
-        fontSize=9, textColor=colors.HexColor('#94a3b8'), alignment=1)
-    elements.append(Paragraph(
-        "S.T.P.A - Societe Tunisienne de Production Alimentaire | STPA Connect",
-        footer_style))
-
-    doc.build(elements)
-    pdf_bytes   = buffer.getvalue()
-    pdf_base64  = base64.b64encode(pdf_bytes).decode('utf-8')
-    nom_fichier = "rapport_" + departement + "_" + datetime.now().strftime('%Y%m%d') + ".pdf"
-
-    html = (
-        "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>" + titre + "</title>"
-        "<style>*{margin:0;padding:0;box-sizing:border-box}"
-        "body{background:#0f172a;font-family:Arial,sans-serif}"
-        ".header{background:#0b1d3a;color:white;padding:12px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #2563eb}"
-        ".header h1{font-size:18px}.header span{font-size:13px;color:#94a3b8;margin-left:12px}"
-        ".btn{background:#2563eb;color:white;padding:10px 20px;border-radius:8px;font-size:14px;text-decoration:none;display:inline-block}"
-        "iframe{width:100%;height:calc(100vh - 56px);border:none;display:block}"
-        "</style></head><body>"
-        "<div class='header'><div><h1>Rapport " + titre + "</h1>"
-        "<span>Departement : " + departement + " | " + datetime.now().strftime('%d/%m/%Y %H:%M') + "</span></div>"
-        "<a class='btn' href='data:application/pdf;base64," + pdf_base64 +
-        "' download='" + nom_fichier + "'>Telecharger PDF</a></div>"
-        "<iframe src='data:application/pdf;base64," + pdf_base64 + "'></iframe>"
-        "</body></html>"
-    )
-    return Response(html, mimetype='text/html')
-
-# ══════════════════════════════════════════
-# /excel_en_pdf
-# ══════════════════════════════════════════
-@app.route('/excel_en_pdf', methods=['GET', 'POST'])
-def excel_en_pdf():
-    from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.lib import colors
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-    from reportlab.lib.units import cm
-
-    data = request.get_json() or {} if request.method == 'POST' else request.args
-
-    titre       = data.get('titre', 'Rapport Excel')
-    departement = data.get('departement', 'N/A')
-    utilisateur = data.get('utilisateur', 'N/A')
-    colonnes    = data.get('colonnes', [])
-    lignes      = data.get('lignes', [])
-
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4),
-        rightMargin=1.5*cm, leftMargin=1.5*cm,
-        topMargin=2*cm, bottomMargin=2*cm)
-    styles = getSampleStyleSheet()
-    elements = []
-
-    titre_style = ParagraphStyle('Titre', parent=styles['Title'],
-        fontSize=20, textColor=colors.HexColor('#0b1d3a'), spaceAfter=6)
-    elements.append(Paragraph("S.T.P.A - " + titre, titre_style))
-
-    sous_style = ParagraphStyle('Sous', parent=styles['Normal'],
-        fontSize=10, textColor=colors.HexColor('#64748b'), spaceAfter=16)
-    elements.append(Paragraph(
-        "Departement : " + departement + " | Genere le " +
-        datetime.now().strftime('%d/%m/%Y a %H:%M') + " par " + utilisateur,
-        sous_style))
-    elements.append(Spacer(1, 0.3*cm))
-
-    if colonnes and lignes:
-        kpi_style = ParagraphStyle('KPI', parent=styles['Normal'],
-            fontSize=12, textColor=colors.HexColor('#0b1d3a'),
-            fontName='Helvetica-Bold', spaceAfter=6)
-        elements.append(Paragraph("Donnees du fichier Excel", kpi_style))
-        elements.append(Spacer(1, 0.3*cm))
-
-        nb_col    = len(colonnes)
-        col_width = (25*cm) / nb_col
-        table_data = [colonnes]
-        for ligne in lignes:
-            table_data.append([str(v) for v in ligne])
-
-        table = Table(table_data, colWidths=[col_width] * nb_col)
-        table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0b1d3a')),
-            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,0), (-1,0), 10),
-            ('FONTSIZE', (0,1), (-1,-1), 9),
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#dde4f0')),
-            ('ROWHEIGHT', (0,0), (-1,-1), 0.7*cm),
-            ('TOPPADDING', (0,0), (-1,-1), 6),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-            ('ROWBACKGROUNDS', (0,1), (-1,-1),
-             [colors.HexColor('#f8fafc'), colors.white]),
-        ]))
-        elements.append(table)
-        elements.append(Spacer(1, 0.5*cm))
-
-        stats_data = [
-            ['Total lignes', str(len(lignes))],
-            ['Total colonnes', str(len(colonnes))],
-            ['Date export', datetime.now().strftime('%d/%m/%Y %H:%M')]
-        ]
-        stats_table = Table(stats_data, colWidths=[8*cm, 8*cm])
-        stats_table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f0f9ff')),
-            ('FONTSIZE', (0,0), (-1,-1), 10),
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#dde4f0')),
-            ('ROWHEIGHT', (0,0), (-1,-1), 0.7*cm),
-        ]))
-        elements.append(stats_table)
-    else:
-        elements.append(Paragraph("Aucune donnee disponible", styles['Normal']))
-
-    footer_style = ParagraphStyle('Footer', parent=styles['Normal'],
-        fontSize=8, textColor=colors.HexColor('#94a3b8'), alignment=1)
-    elements.append(Spacer(1, 0.8*cm))
-    elements.append(Paragraph(
-        "S.T.P.A - Societe Tunisienne de Production Alimentaire | STPA Connect",
-        footer_style))
-
-    doc.build(elements)
-    pdf_bytes   = buffer.getvalue()
-    pdf_base64  = base64.b64encode(pdf_bytes).decode('utf-8')
-    nom_fichier = "excel_" + departement + "_" + datetime.now().strftime('%Y%m%d') + ".pdf"
-
-    html = (
-        "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>" + titre + "</title>"
-        "<style>*{margin:0;padding:0;box-sizing:border-box}"
-        "body{background:#0f172a;font-family:Arial,sans-serif}"
-        ".header{background:#0b1d3a;color:white;padding:12px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #2563eb}"
-        ".header h1{font-size:18px}.header span{font-size:12px;color:#94a3b8}"
-        ".btn{background:#2563eb;color:white;padding:10px 20px;border-radius:8px;font-size:14px;text-decoration:none}"
-        "iframe{width:100%;height:calc(100vh - 56px);border:none;display:block}"
-        "</style></head><body>"
-        "<div class='header'><div><h1>" + titre + "</h1>"
-        "<span>" + departement + " | " + datetime.now().strftime('%d/%m/%Y %H:%M') + "</span></div>"
-        "<a class='btn' href='data:application/pdf;base64," + pdf_base64 +
-        "' download='" + nom_fichier + "'>Telecharger PDF</a></div>"
-        "<iframe src='data:application/pdf;base64," + pdf_base64 + "'></iframe>"
-        "</body></html>"
-    )
-    return Response(html, mimetype='text/html')
-
-# ══════════════════════════════════════════
-# /alertes — analyse seuils conformité
-# ══════════════════════════════════════════
-@app.route('/alertes', methods=['POST'])
-def alertes():
-    data                = request.get_json()
-    rapports            = data.get('rapports', [])
-    seuil_critique      = float(data.get('seuil_critique', 85))
-    seuil_avertissement = float(data.get('seuil_avertissement', 90))
-
-    alertes_list = []
-    for r in rapports:
-        dept       = r.get('departement', 'N/A')
-        conformite = float(r.get('conformite', 100))
-        nb_alertes = int(r.get('alertes', 0))
-
-        if conformite < seuil_critique or nb_alertes >= 5:
-            alertes_list.append({
-                "type": "critique",
-                "departement": dept,
-                "message": "Conformite critique : " + str(conformite) + "% pour " + dept,
-                "conformite": conformite,
-                "couleur": "#E24B4A",
-                "priorite": 1
-            })
-        elif conformite < seuil_avertissement or nb_alertes >= 3:
-            alertes_list.append({
-                "type": "avertissement",
-                "departement": dept,
-                "message": "Conformite faible : " + str(conformite) + "% pour " + dept,
-                "conformite": conformite,
-                "couleur": "#BA7517",
-                "priorite": 2
-            })
-
-    alertes_list.sort(key=lambda x: x['priorite'])
-    return jsonify({
-        "nb_alertes": len(alertes_list),
-        "nb_critiques": len([a for a in alertes_list if a['type'] == 'critique']),
-        "nb_avertissements": len([a for a in alertes_list if a['type'] == 'avertissement']),
-        "alertes": alertes_list,
-        "statut": "critique" if any(a['type'] == 'critique' for a in alertes_list) else
-                  "avertissement" if alertes_list else "normal"
-    })
-
-# ══════════════════════════════════════════
-# /agent — Agent IA autonome
-# ══════════════════════════════════════════
-@app.route('/agent', methods=['POST'])
-def agent():
-    import json
-    import urllib.request as url_req
-
-    data        = request.get_json() or {}
-    colonnes    = data.get('colonnes', [])
-    lignes      = data.get('lignes', [])
-    webhook     = data.get('webhook_url', '')
-    utilisateur = data.get('utilisateur', 'Agent STPA')
-
-    if not colonnes or not lignes:
-        return jsonify({"erreur": "colonnes et lignes sont obligatoires"}), 400
-
-    # Analyse ligne par ligne
-    alertes_detectees = []
-    for ligne in lignes:
-        rapport = {}
-        for i, col in enumerate(colonnes):
-            rapport[col] = ligne[i] if i < len(ligne) else ''
-
-        dept  = str(rapport.get('Département', rapport.get('Departement', 'N/A')))
-        titre = str(rapport.get('Titre', rapport.get('Title', 'N/A')))
-
-        conf_raw = str(rapport.get('Conforme', rapport.get('Conformite', '100')))
-        conf_raw = conf_raw.replace('%', '').replace(',', '.').strip()
+    # ── Conversion float robuste
+    def to_float(val):
         try:
-            conformite = float(conf_raw)
-        except ValueError:
-            conformite = 100.0
+            return float(str(val).replace(',', '.').replace(' ', '').strip())
+        except:
+            return None
 
-        if conformite < 85:
-            niveau  = "critique"
-            message = "Conformite critique " + str(round(conformite, 1)) + "% — " + dept + " — " + titre
-        elif conformite < 90:
-            niveau  = "avertissement"
-            message = "Conformite faible " + str(round(conformite, 1)) + "% — " + dept + " — " + titre
-        else:
-            niveau  = "normal"
-            message = None
+    # ── Normes métier SSSE (identiques au Compose Power Automate)
+    NORMES = {
+        "Humidite":      {"min": 13.5, "max": 14.5, "label": "Humidite",       "unite": "%"},
+        "AW":            {"max": 0.7,               "label": "AW",             "unite": ""},
+        "Proteine_Brut": {"min": 10,                "label": "Proteine Brut",  "unite": "%"},
+        "Proteine_MS":   {"min": 12,                "label": "Proteine/MS",    "unite": "%"},
+        "G_400":         {"max": 10,                "label": "Somme >400µ",    "unite": "%"},
+        "G_355_250":     {"min": 40,                "label": "Somme 355-250",  "unite": "%"},
+        "G_200":         {"max": 50,                "label": "Somme <200µ",    "unite": "%"},
+        "G_125":         {"max": 10,                "label": "G <125µ",        "unite": "%"},
+        "Gluten_Humide": {"min": 28,                "label": "Gluten Humide",  "unite": "%"},
+        "Gluten_Index":  {"min": 65, "max": 90,     "label": "Gluten Index",   "unite": "%"},
+        "Gluten_Sec":    {"min": 10,                "label": "Gluten Sec",     "unite": "%"},
+        "Col_b":         {"min": 18,                "label": "Couleur b",      "unite": ""},
+        "Piqure_Noir":   {"max": 10,                "label": "Piqure Noir",    "unite": ""},
+        "Piqure_Brun":   {"max": 100,               "label": "Piqure Brun",    "unite": ""},
+        "Cendres":       {"max": 1,                 "label": "Cendres",        "unite": "%"},
+        "T_Chute":       {"min": 250,               "label": "T Chute",        "unite": ""},
+        "Emballage":     {"valeur_ok": "C",         "label": "Emballage",      "unite": ""},
+        "C_Poids":       {"valeur_ok": "C",         "label": "Poids",          "unite": ""},
+        "C_Date":        {"valeur_ok": "C",         "label": "Etiquetage",     "unite": ""},
+    }
 
-        if message:
-            alertes_detectees.append({
-                "departement": dept,
-                "titre": titre,
-                "conformite": round(conformite, 1),
-                "niveau": niveau,
-                "message": message,
-                "horodatage": datetime.now().strftime('%d/%m/%Y %H:%M')
+    # ── Mapping colonnes Excel → clés internes
+    COL_MAP = {
+        "Humidite":                           "Humidite",
+        "Humidite (%)":                       "Humidite",
+        "Humidité (%)":                       "Humidite",
+        "AW":                                 "AW",
+        "Proteine_Brut":                      "Proteine_Brut",
+        "Protéine Brut (%) (+/-0,7)":         "Proteine_Brut",
+        "Protéine Brut (%) (+/-0.7)":         "Proteine_Brut",
+        "Proteine_MS":                        "Proteine_MS",
+        "Protéine (%)/MS":                    "Proteine_MS",
+        "G_400":                              "G_400",
+        "∑ >400µ":                            "G_400",
+        "G_355_250":                          "G_355_250",
+        "∑ 355;250":                          "G_355_250",
+        "G_200":                              "G_200",
+        "∑ < 200µ":                           "G_200",
+        "G_125":                              "G_125",
+        "G < 125µ":                           "G_125",
+        "Gluten_Humide":                      "Gluten_Humide",
+        "Gluten Humide":                      "Gluten_Humide",
+        "Gluten_Index":                       "Gluten_Index",
+        "Gluten Index":                       "Gluten_Index",
+        "Gluten_Sec":                         "Gluten_Sec",
+        "Gluten Sec":                         "Gluten_Sec",
+        "Col_b":                              "Col_b",
+        "Col. b":                             "Col_b",
+        "Piqure_Noir":                        "Piqure_Noir",
+        "Piqûre Noir":                        "Piqure_Noir",
+        "Piqure_Brun":                        "Piqure_Brun",
+        "Piqûre Brun":                        "Piqure_Brun",
+        "Cendres":                            "Cendres",
+        "Cendres (%) (+/- 0,02)":             "Cendres",
+        "T_Chute":                            "T_Chute",
+        "T Chute":                            "T_Chute",
+        "Emballage":                          "Emballage",
+        "Embalage (Etanchite,visuel...)":     "Emballage",
+        "Embalage (Etanchité,visuel...)":     "Emballage",
+        "C_Poids":                            "C_Poids",
+        "C.Poids ":                           "C_Poids",
+        "C_Date":                             "C_Date",
+        "C .Date ":                           "C_Date",
+        "Date":                               "Date",
+        "N_lot":                              "N_lot",
+        "N°lot":                              "N_lot",
+        "Heure":                              "Heure",
+        "N_echantillon":                      "N_echantillon",
+        "N° de l'échantillon":                "N_echantillon",
+        "Etape":                              "Etape",
+        "Flux_Statut":                        "Flux_Statut",
+        "Decision":                           "Decision",
+        "Décision":                           "Decision",
+        "Probleme":                           "Probleme",
+        "Problème":                           "Probleme",
+        "Notif":                              "Notif",
+    }
+
+    # ── Normalisation des lignes reçues
+    rapports = []
+    for ligne in lignes:
+        r_norm = {}
+        if isinstance(ligne, dict):
+            for col_excel, col_interne in COL_MAP.items():
+                val = ligne.get(col_excel)
+                if val is not None and str(val).strip():
+                    r_norm[col_interne] = val
+        rapports.append(r_norm)
+
+    nb_total = len(rapports)
+
+    # ── Vérification conformité par paramètre
+    def verifier_conformite(valeur_raw, norme):
+        if "valeur_ok" in norme:
+            val = str(valeur_raw).strip()
+            return None if not val else val == norme["valeur_ok"]
+        val = to_float(valeur_raw)
+        if val is None:
+            return None
+        if "min" in norme and val < norme["min"]:
+            return False
+        if "max" in norme and val > norme["max"]:
+            return False
+        return True
+
+    # ── Initialisation stats
+    stats_params = {
+        k: {"valeurs": [], "hors_norme": 0, "total": 0}
+        for k in NORMES
+    }
+
+    # ── Analyse ligne par ligne
+    anomalies_par_ligne = []
+
+    for r in rapports:
+        anomalies_ligne = []
+
+        for cle, norme in NORMES.items():
+            val_raw = r.get(cle, '')
+            if not str(val_raw).strip():
+                continue
+
+            stats_params[cle]["total"] += 1
+            conforme = verifier_conformite(val_raw, norme)
+
+            if conforme is False:
+                stats_params[cle]["hors_norme"] += 1
+                if "valeur_ok" in norme:
+                    msg = "- " + norme['label'] + " : " + str(val_raw) + " (cible " + norme['valeur_ok'] + ")"
+                elif "min" in norme and "max" in norme:
+                    msg = ("- " + norme['label'] + " : " + str(val_raw) + " " +
+                           norme['unite'] + " (cible " + str(norme['min']) +
+                           " < x < " + str(norme['max']) + ")")
+                elif "min" in norme:
+                    msg = ("- " + norme['label'] + " : " + str(val_raw) + " " +
+                           norme['unite'] + " (cible > " + str(norme['min']) + ")")
+                else:
+                    msg = ("- " + norme['label'] + " : " + str(val_raw) + " " +
+                           norme['unite'] + " (cible < " + str(norme['max']) + ")")
+                anomalies_ligne.append(msg)
+
+            if conforme is not None and "valeur_ok" not in norme:
+                v = to_float(val_raw)
+                if v is not None:
+                    stats_params[cle]["valeurs"].append(v)
+
+        if anomalies_ligne:
+            anomalies_par_ligne.append({
+                "lot":          str(r.get('N_lot', 'N/A')),
+                "date":         str(r.get('Date', 'N/A')),
+                "heure":        str(r.get('Heure', 'N/A')),
+                "echantillon":  str(r.get('N_echantillon', 'N/A')),
+                "etape":        str(r.get('Etape', 'N/A')),
+                "nb_anomalies": len(anomalies_ligne),
+                "anomalies":    anomalies_ligne,
+                "niveau":       "critique" if len(anomalies_ligne) >= 3 else "avertissement"
             })
 
-    # Mise à jour mémoire
+    # ── KPI par paramètre
+    kpi_params = []
+    for cle, norme in NORMES.items():
+        stats   = stats_params[cle]
+        valeurs = stats["valeurs"]
+        total   = stats["total"]
+        hors    = stats["hors_norme"]
+
+        kpi = {
+            "parametre":  norme["label"],
+            "unite":      norme.get("unite", ""),
+            "nb_mesures": total,
+            "hors_norme": hors,
+            "taux_ok":    round((total - hors) / total * 100, 1) if total > 0 else 100,
+            "statut":     "critique" if hors >= 3 else "avertissement" if hors >= 1 else "normal"
+        }
+        if valeurs:
+            kpi["moyenne"] = round(sum(valeurs) / len(valeurs), 3)
+            kpi["minimum"] = round(min(valeurs), 3)
+            kpi["maximum"] = round(max(valeurs), 3)
+        if "min" in norme:
+            kpi["norme_min"] = norme["min"]
+        if "max" in norme:
+            kpi["norme_max"] = norme["max"]
+
+        kpi_params.append(kpi)
+
+    kpi_params.sort(key=lambda x: x["taux_ok"])
+
+    # ── KPI globaux
+    nb_anomalies      = len(anomalies_par_ligne)
+    nb_critiques      = len([a for a in anomalies_par_ligne if a["niveau"] == "critique"])
+    nb_avertissements = len([a for a in anomalies_par_ligne if a["niveau"] == "avertissement"])
+    taux_conformite   = round((nb_total - nb_anomalies) / nb_total * 100, 1) if nb_total > 0 else 100
+
+    params_problematiques = [p for p in kpi_params if p["hors_norme"] > 0]
+
+    # ── Statut global
+    if nb_critiques > 0 or taux_conformite < 85:
+        statut = "critique"
+    elif nb_avertissements > 0 or taux_conformite < 90:
+        statut = "avertissement"
+    else:
+        statut = "normal"
+
+    # ── Mise à jour mémoire
     agent_etat['derniere_analyse'] = datetime.now().strftime('%d/%m/%Y %H:%M')
     agent_etat['nb_analyses']     += 1
-    agent_etat['alertes_envoyees'].extend(alertes_detectees)
-
-    if any(a['niveau'] == 'critique' for a in alertes_detectees):
-        agent_etat['statut'] = 'critique'
-    elif alertes_detectees:
-        agent_etat['statut'] = 'avertissement'
-    else:
-        agent_etat['statut'] = 'normal'
-
-    # Déclenchement webhook Power Automate
-    flux_declenche = False
-    if alertes_detectees and webhook:
-        payload = json.dumps({
-            "nb_alertes": len(alertes_detectees),
-            "nb_critiques": len([a for a in alertes_detectees if a['niveau'] == 'critique']),
-            "nb_avertissements": len([a for a in alertes_detectees if a['niveau'] == 'avertissement']),
-            "alertes": alertes_detectees,
-            "statut": agent_etat['statut'],
-            "horodatage": agent_etat['derniere_analyse'],
-            "analyse_par": utilisateur
-        }).encode('utf-8')
-        req = url_req.Request(
-            webhook,
-            data=payload,
-            headers={'Content-Type': 'application/json'},
-            method='POST'
-        )
-        try:
-            with url_req.urlopen(req, timeout=15) as resp:
-                flux_declenche = resp.status in (200, 202)
-        except Exception:
-            flux_declenche = False
+    agent_etat['statut']           = statut
+    agent_etat['alertes_envoyees'].extend(anomalies_par_ligne)
 
     return jsonify({
-        "statut": agent_etat['statut'],
-        "nb_lignes_analysees": len(lignes),
-        "nb_alertes": len(alertes_detectees),
-        "nb_critiques": len([a for a in alertes_detectees if a['niveau'] == 'critique']),
-        "nb_avertissements": len([a for a in alertes_detectees if a['niveau'] == 'avertissement']),
-        "alertes": alertes_detectees,
-        "flux_declenche": flux_declenche,
-        "analyse_numero": agent_etat['nb_analyses'],
-        "horodatage": agent_etat['derniere_analyse'],
-        "analyse_par": utilisateur
+        "source":     source,
+        "horodatage": datetime.now().strftime('%d/%m/%Y %H:%M'),
+        "statut":     statut,
+        "kpi_globaux": {
+            "nb_total":          nb_total,
+            "nb_conformes":      nb_total - nb_anomalies,
+            "nb_non_conformes":  nb_anomalies,
+            "nb_critiques":      nb_critiques,
+            "nb_avertissements": nb_avertissements,
+            "taux_conformite":   taux_conformite
+        },
+        "kpi_parametres":        kpi_params,
+        "anomalies":             anomalies_par_ligne[:20],
+        "params_problematiques": params_problematiques[:5],
+        "analyse_numero":        agent_etat['nb_analyses']
     })
 
 # ══════════════════════════════════════════
-# /agent/statut — état de l'agent
+# /agent/statut
 # ══════════════════════════════════════════
 @app.route('/agent/statut', methods=['GET'])
 def agent_statut():
     return jsonify({
-        "statut": agent_etat['statut'],
+        "statut":           agent_etat['statut'],
         "derniere_analyse": agent_etat['derniere_analyse'],
         "nb_analyses_total": agent_etat['nb_analyses'],
         "nb_alertes_total": len(agent_etat['alertes_envoyees']),
-        "en_ligne": True
+        "en_ligne":         True
     })

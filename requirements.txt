@@ -1,7 +1,2 @@
 flask
 gunicorn
-reportlab
-pandas
-numpy
-openpyxl
-schedule

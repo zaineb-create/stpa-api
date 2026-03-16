@@ -10,7 +10,9 @@ agent_etat = {
     "derniere_analyse": None,
     "nb_analyses": 0,
     "alertes_envoyees": [],
-    "statut": "en attente"
+    "statut": "en attente",
+    "taux_conformite": 0,
+    "nb_non_conformes": 0
 }
 
 # ══════════════════════════════════════════
@@ -33,14 +35,12 @@ def analyse_kpi():
     if not lignes:
         return jsonify({"erreur": "Aucune donnee recue"}), 400
 
-    # ── Conversion float robuste
     def to_float(val):
         try:
             return float(str(val).replace(',', '.').replace(' ', '').strip())
         except:
             return None
 
-    # ── Normes métier SSSE (identiques au Compose Power Automate)
     NORMES = {
         "Humidite":      {"min": 13.5, "max": 14.5, "label": "Humidite",       "unite": "%"},
         "AW":            {"max": 0.7,               "label": "AW",             "unite": ""},
@@ -63,7 +63,6 @@ def analyse_kpi():
         "C_Date":        {"valeur_ok": "C",         "label": "Etiquetage",     "unite": ""},
     }
 
-    # ── Mapping colonnes Excel → clés internes
     COL_MAP = {
         "Humidite":                           "Humidite",
         "Humidite (%)":                       "Humidite",
@@ -120,7 +119,6 @@ def analyse_kpi():
         "Notif":                              "Notif",
     }
 
-    # ── Normalisation des lignes reçues
     rapports = []
     for ligne in lignes:
         r_norm = {}
@@ -133,7 +131,6 @@ def analyse_kpi():
 
     nb_total = len(rapports)
 
-    # ── Vérification conformité par paramètre
     def verifier_conformite(valeur_raw, norme):
         if "valeur_ok" in norme:
             val = str(valeur_raw).strip()
@@ -147,26 +144,21 @@ def analyse_kpi():
             return False
         return True
 
-    # ── Initialisation stats
     stats_params = {
         k: {"valeurs": [], "hors_norme": 0, "total": 0}
         for k in NORMES
     }
 
-    # ── Analyse ligne par ligne
     anomalies_par_ligne = []
 
     for r in rapports:
         anomalies_ligne = []
-
         for cle, norme in NORMES.items():
             val_raw = r.get(cle, '')
             if not str(val_raw).strip():
                 continue
-
             stats_params[cle]["total"] += 1
             conforme = verifier_conformite(val_raw, norme)
-
             if conforme is False:
                 stats_params[cle]["hors_norme"] += 1
                 if "valeur_ok" in norme:
@@ -182,7 +174,6 @@ def analyse_kpi():
                     msg = ("- " + norme['label'] + " : " + str(val_raw) + " " +
                            norme['unite'] + " (cible < " + str(norme['max']) + ")")
                 anomalies_ligne.append(msg)
-
             if conforme is not None and "valeur_ok" not in norme:
                 v = to_float(val_raw)
                 if v is not None:
@@ -200,14 +191,12 @@ def analyse_kpi():
                 "niveau":       "critique" if len(anomalies_ligne) >= 3 else "avertissement"
             })
 
-    # ── KPI par paramètre
     kpi_params = []
     for cle, norme in NORMES.items():
         stats   = stats_params[cle]
         valeurs = stats["valeurs"]
         total   = stats["total"]
         hors    = stats["hors_norme"]
-
         kpi = {
             "parametre":  norme["label"],
             "unite":      norme.get("unite", ""),
@@ -224,12 +213,10 @@ def analyse_kpi():
             kpi["norme_min"] = norme["min"]
         if "max" in norme:
             kpi["norme_max"] = norme["max"]
-
         kpi_params.append(kpi)
 
     kpi_params.sort(key=lambda x: x["taux_ok"])
 
-    # ── KPI globaux
     nb_anomalies      = len(anomalies_par_ligne)
     nb_critiques      = len([a for a in anomalies_par_ligne if a["niveau"] == "critique"])
     nb_avertissements = len([a for a in anomalies_par_ligne if a["niveau"] == "avertissement"])
@@ -237,7 +224,6 @@ def analyse_kpi():
 
     params_problematiques = [p for p in kpi_params if p["hors_norme"] > 0]
 
-    # ── Statut global
     if nb_critiques > 0 or taux_conformite < 85:
         statut = "critique"
     elif nb_avertissements > 0 or taux_conformite < 90:
@@ -245,10 +231,12 @@ def analyse_kpi():
     else:
         statut = "normal"
 
-    # ── Mise à jour mémoire
-    agent_etat['derniere_analyse'] = datetime.now().strftime('%d/%m/%Y %H:%M')
-    agent_etat['nb_analyses']     += 1
-    agent_etat['statut']           = statut
+    # ── Mise à jour mémoire complète
+    agent_etat['derniere_analyse']  = datetime.now().strftime('%d/%m/%Y %H:%M')
+    agent_etat['nb_analyses']      += 1
+    agent_etat['statut']            = statut
+    agent_etat['taux_conformite']   = taux_conformite
+    agent_etat['nb_non_conformes']  = nb_anomalies
     agent_etat['alertes_envoyees'].extend(anomalies_par_ligne)
 
     return jsonify({
@@ -275,9 +263,22 @@ def analyse_kpi():
 @app.route('/agent/statut', methods=['GET'])
 def agent_statut():
     return jsonify({
+        "statut":            agent_etat['statut'],
+        "derniere_analyse":  agent_etat['derniere_analyse'],
+        "nb_analyses_total": agent_etat['nb_analyses'],
+        "nb_alertes_total":  len(agent_etat['alertes_envoyees']),
+        "en_ligne":          True
+    })
+
+# ══════════════════════════════════════════
+# /kpi/statut — pour Power Apps dashboard
+# Retourne exactement les 4 champs attendus
+# ══════════════════════════════════════════
+@app.route('/kpi/statut', methods=['GET'])
+def kpi_statut():
+    return jsonify({
         "statut":           agent_etat['statut'],
         "derniere_analyse": agent_etat['derniere_analyse'],
-        "nb_analyses_total": agent_etat['nb_analyses'],
-        "nb_alertes_total": len(agent_etat['alertes_envoyees']),
-        "en_ligne":         True
+        "taux_conformite":  agent_etat['taux_conformite'],
+        "nb_non_conformes": agent_etat['nb_non_conformes']
     })
